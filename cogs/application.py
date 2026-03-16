@@ -9,7 +9,7 @@ from enum import Enum
 from config import (
     REQUEST_CHANNEL_ID, ACCEPTED_CHANNEL_ID, REJECTED_CHANNEL_ID,
     APPLICATION_BUTTON_CHANNEL_ID, APPLICATION_BANNER_URL, VOICE_CHANNEL_ID,
-    ROLE_OZON, ROLE_GUEST, YOUNG_ROLE_ID,  # используем YOUNG вместо FAMQ и ACADEMY
+    ROLE_OZON, ROLE_GUEST, YOUNG_ROLE_ID,
     INVITER_ROLE_ID, LEADER_ROLE_ID, DEPUTY_LEADER_ROLE_ID,
     EMOJI_ACCEPT, EMOJI_REJECT, EMOJI_CALL,
     RESULTS_CHANNEL_ID
@@ -43,8 +43,8 @@ async def send_to_channel(channel, embed=None, embeds=None):
     if channel:
         await channel.send(embed=embed, embeds=embeds, allowed_mentions=discord.AllowedMentions.none())
 
-async def create_past_apps_text(guild, user_id):
-    past_apps = await db.get_user_applications(user_id)
+def create_past_apps_text(guild, user_id):
+    past_apps = db.get_user_applications(user_id)
     lines = []
     for app_id, status, date, msg_id in past_apps[:5]:
         if msg_id:
@@ -69,7 +69,6 @@ async def create_past_apps_text(guild, user_id):
 def is_account_recent(created_at):
     return datetime.now().astimezone() - created_at < timedelta(days=30)
 
-
 class ApplicationModal(Modal, title="Заявка на вступление"):
     def __init__(self, bot):
         super().__init__()
@@ -87,7 +86,7 @@ class ApplicationModal(Modal, title="Заявка на вступление"):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            if not await db.are_applications_open():
+            if not db.are_applications_open():
                 return await interaction.followup.send("❌ Приём заявок закрыт.", ephemeral=True)
 
             answers = [item.value for item in self.children]
@@ -111,7 +110,7 @@ class ApplicationModal(Modal, title="Заявка на вступление"):
                 ),
                 inline=False
             )
-            past_apps_text = await create_past_apps_text(guild, user.id)
+            past_apps_text = create_past_apps_text(guild, user.id)
             embed1.add_field(name="**ПРОШЛЫЕ ЗАЯВКИ**", value=past_apps_text, inline=False)
             embed1.add_field(name="**СТАТУС ЗАЯВКИ**", value="⏳ Ожидает рассмотрения", inline=False)
             embed1.add_field(name="**РЕЗУЛЬТАТ РАССМОТРЕНИЯ**", value="—", inline=False)
@@ -134,7 +133,7 @@ class ApplicationModal(Modal, title="Заявка на вступление"):
                     allowed_mentions=discord.AllowedMentions(roles=True)
                 )
 
-            app_id = await db.add_application(user.id, answers_json, msg.id, ping_msg.id if ping_msg else None)
+            app_id = db.add_application(user.id, answers_json, msg.id, ping_msg.id if ping_msg else None)
             embed1.set_footer(text=f"ID заявки: {app_id}")
 
             await msg.edit(embeds=[embed1, embed2], view=ApplicationButtons(self.bot))
@@ -151,18 +150,17 @@ class ApplicationModal(Modal, title="Заявка на вступление"):
         except:
             pass
 
-
 class ApplicationButtons(View):
     def __init__(self, bot):
         super().__init__(timeout=None)
         self.bot = bot
 
-    async def get_application_data(self, interaction: discord.Interaction):
+    def get_application_data(self, interaction: discord.Interaction):
         message_id = interaction.message.id
-        app_data = await db.get_application_by_message(message_id)
+        app_data = db.get_application_by_message(message_id)
         return app_data, interaction.message
 
-    async def can_interact(self, interaction: discord.Interaction, app_data):
+    def can_interact(self, interaction: discord.Interaction, app_data):
         app_id, owner_id, _, _, _, _, claimed_by, _ = app_data[:8]
         leader_ids = [LEADER_ROLE_ID, DEPUTY_LEADER_ROLE_ID]
         if has_any_role(interaction.user, leader_ids):
@@ -194,10 +192,15 @@ class ApplicationButtons(View):
         else:
             new_embed.add_field(name="**Рассматривает**", value=reviewer_text, inline=False)
 
-        await message.edit(embeds=[new_embed, embed2])
+        try:
+            await message.edit(embeds=[new_embed, embed2])
+        except discord.NotFound:
+            pass
+        except Exception as e:
+            print(f"Ошибка при редактировании сообщения заявки: {e}")
 
     async def _cleanup(self, message):
-        app_data = await db.get_application_by_message(message.id)
+        app_data = db.get_application_by_message(message.id)
         if not app_data:
             return
         _, _, _, _, _, _, _, ping_id = app_data[:8]
@@ -215,10 +218,10 @@ class ApplicationButtons(View):
         try:
             await interaction.response.defer(ephemeral=True)
 
-            app_data, message = await self.get_application_data(interaction)
+            app_data, message = self.get_application_data(interaction)
             if not app_data:
                 return await interaction.followup.send("❌ Заявка не найдена в базе данных.", ephemeral=True)
-            if not await self.can_interact(interaction, app_data):
+            if not self.can_interact(interaction, app_data):
                 return await interaction.followup.send("❌ Заявка уже обрабатывается.", ephemeral=True)
 
             app_id, user_id, _, _, _, _, claimed_by, _ = app_data[:8]
@@ -231,7 +234,7 @@ class ApplicationButtons(View):
                 return await interaction.followup.send("❌ Роль обзвона не найдена.", ephemeral=True)
 
             if claimed_by is None:
-                await db.set_application_claimed(app_id, interaction.user.id)
+                db.set_application_claimed(app_id, interaction.user.id)
 
             await member.add_roles(role_ozon, reason="Вызов на обзвон")
             voice_channel_id = VOICE_CHANNEL_ID[0] if isinstance(VOICE_CHANNEL_ID, tuple) else VOICE_CHANNEL_ID
@@ -259,10 +262,10 @@ class ApplicationButtons(View):
         try:
             await interaction.response.defer(ephemeral=True)
 
-            app_data, message = await self.get_application_data(interaction)
+            app_data, message = self.get_application_data(interaction)
             if not app_data:
                 return await interaction.followup.send("❌ Заявка не найдена в базе данных.", ephemeral=True)
-            if not await self.can_interact(interaction, app_data):
+            if not self.can_interact(interaction, app_data):
                 return await interaction.followup.send("❌ Заявка уже обрабатывается.", ephemeral=True)
 
             app_id, user_id, answers_json, _, _, _, _, ping_id = app_data[:8]
@@ -285,7 +288,7 @@ class ApplicationButtons(View):
             if role_young:
                 await member.add_roles(role_young)
 
-            await db.update_application_status(app_id, AppStatus.ACCEPTED.value, interaction.user.id)
+            db.update_application_status(app_id, AppStatus.ACCEPTED.value, interaction.user.id)
 
             # Автоматическая смена ника
             if answers_json:
@@ -304,7 +307,7 @@ class ApplicationButtons(View):
                     print(f"Ошибка парсинга answers: {e}")
 
             # Автосоздание портфеля (если ещё нет)
-            if not await db.get_portfolio_by_owner(member.id):
+            if not db.get_portfolio_by_owner(member.id):
                 try:
                     from cogs.portfolio import create_portfolio_for_user
                     await create_portfolio_for_user(interaction.guild, member)
@@ -345,10 +348,10 @@ class ApplicationButtons(View):
     @discord.ui.button(label="Отклонить", style=discord.ButtonStyle.danger, emoji="❌", custom_id="reject_application")
     async def reject_callback(self, interaction: discord.Interaction, button: Button):
         try:
-            app_data, message = await self.get_application_data(interaction)
+            app_data, message = self.get_application_data(interaction)
             if not app_data:
                 return await interaction.response.send_message("❌ Заявка не найдена в базе данных.", ephemeral=True)
-            if not await self.can_interact(interaction, app_data):
+            if not self.can_interact(interaction, app_data):
                 return await interaction.response.send_message("❌ Заявка уже обрабатывается.", ephemeral=True)
             modal = RejectModal(message.id, self.bot)
             await interaction.response.send_modal(modal)
@@ -356,7 +359,6 @@ class ApplicationButtons(View):
         except Exception as e:
             traceback.print_exc()
             await interaction.response.send_message(f"❌ Внутренняя ошибка: {e}", ephemeral=True)
-
 
 class RejectModal(Modal, title="Отклонение заявки"):
     def __init__(self, message_id, bot):
@@ -377,7 +379,7 @@ class RejectModal(Modal, title="Отклонение заявки"):
 
         async def background():
             try:
-                app_data = await db.get_application_by_message(self.message_id)
+                app_data = db.get_application_by_message(self.message_id)
                 if not app_data:
                     print("❌ Заявка не найдена в БД")
                     return
@@ -385,16 +387,13 @@ class RejectModal(Modal, title="Отклонение заявки"):
                 app_id, user_id, answers_json, status, reviewer_id, message_id, claimed_by, ping_id, reviewed_at = app_data
                 member = interaction.guild.get_member(user_id)
 
-                # 1. Удаляем роль OZON, если есть
                 if member:
                     role_ozon = interaction.guild.get_role(ROLE_OZON)
                     if role_ozon and role_ozon in member.roles:
                         await member.remove_roles(role_ozon)
 
-                # 2. Обновляем статус в БД
-                await db.update_application_status(app_id, AppStatus.REJECTED.value, interaction.user.id)
+                db.update_application_status(app_id, AppStatus.REJECTED.value, interaction.user.id)
 
-                # 3. Отправляем уведомление пользователю в ЛС
                 if member:
                     try:
                         embed_dm = discord.Embed(
@@ -407,7 +406,6 @@ class RejectModal(Modal, title="Отклонение заявки"):
                     except:
                         pass
 
-                # 4. Отправляем ПОЛНУЮ заявку в канал отклонённых
                 rejected_channel = self.bot.get_channel(REJECTED_CHANNEL_ID)
                 if rejected_channel:
                     try:
@@ -422,7 +420,6 @@ class RejectModal(Modal, title="Отклонение заявки"):
                     except Exception as e:
                         print(f"Ошибка при отправке в канал отклонённых: {e}")
 
-                # 5. Отправляем КРАТКОЕ уведомление в канал итогов
                 results_channel = self.bot.get_channel(RESULTS_CHANNEL_ID)
                 if results_channel:
                     review_time = datetime.now()
@@ -439,7 +436,6 @@ class RejectModal(Modal, title="Отклонение заявки"):
 
                     await results_channel.send(embed=embed_result)
 
-                # 6. Удаляем оригинальное сообщение заявки и пинг
                 try:
                     msg = await interaction.channel.fetch_message(self.message_id)
                     await safe_delete(msg)
@@ -465,7 +461,6 @@ class RejectModal(Modal, title="Отклонение заявки"):
         except:
             pass
 
-
 class ApplyButtonView(View):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -474,7 +469,7 @@ class ApplyButtonView(View):
     @discord.ui.button(label="📋 Подать заявку в семью", style=discord.ButtonStyle.gray, custom_id="apply_button")
     async def apply_button_callback(self, interaction: discord.Interaction, button: Button):
         try:
-            if not await db.are_applications_open():
+            if not db.are_applications_open():
                 return await interaction.response.send_message("❌ Приём заявок закрыт.", ephemeral=True)
             await interaction.response.send_modal(ApplicationModal(self.bot))
 
@@ -482,18 +477,14 @@ class ApplyButtonView(View):
             traceback.print_exc()
             await interaction.response.send_message(f"❌ Внутренняя ошибка: {e}", ephemeral=True)
 
-
 class Application(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        asyncio.create_task(self.init_db_async())
+        db.init_db()
         self.bot.add_view(ApplicationButtons(self.bot))
         self.bot.add_view(ApplyButtonView(self.bot))
         print("✅ Persistent view для заявок зарегистрированы")
         self.bot.loop.create_task(self.restore_application_buttons())
-
-    async def init_db_async(self):
-        await db.init_db()
 
     async def restore_application_buttons(self):
         await self.bot.wait_until_ready()
@@ -504,7 +495,7 @@ class Application(commands.Cog):
         count = 0
         async for message in channel.history(limit=200):
             if message.author == self.bot.user and len(message.embeds) == 2:
-                if await db.get_application_by_message(message.id):
+                if db.get_application_by_message(message.id):
                     await message.edit(view=ApplicationButtons(self.bot))
                     count += 1
         print(f"✅ Восстановлено {count} кнопок для заявок")
@@ -518,7 +509,7 @@ class Application(commands.Cog):
         count = 0
         async for message in channel.history(limit=500):
             if message.author == self.bot.user and len(message.embeds) == 2:
-                if await db.get_application_by_message(message.id):
+                if db.get_application_by_message(message.id):
                     await message.edit(view=ApplicationButtons(self.bot))
                     count += 1
         await ctx.send(f"✅ Восстановлено {count} кнопок.")
@@ -548,12 +539,11 @@ class Application(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member):
-        applications = await db.get_user_applications(member.id)
+        applications = db.get_user_applications(member.id)
         for app_id, status, date, msg_id in applications:
             if status == AppStatus.PENDING.value:
-                await db.update_application_status(app_id, AppStatus.REJECTED.value, self.bot.user.id)
+                db.update_application_status(app_id, AppStatus.REJECTED.value, self.bot.user.id)
                 print(f"✅ Заявка {app_id} отклонена (пользователь покинул сервер)")
-
 
 async def setup(bot):
     await bot.add_cog(Application(bot))

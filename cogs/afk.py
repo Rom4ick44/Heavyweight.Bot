@@ -9,7 +9,6 @@ from datetime import datetime
 from config import AFK_LOG_CHANNEL_ID, AFK_PANEL_CHANNEL_ID
 import database as db
 
-# Функции parse_duration и format_remaining остаются без изменений
 def parse_duration(duration_str: str) -> int:
     duration_str = duration_str.lower().replace(' ', '')
     pattern = re.compile(r'^(?:(\d+)(?:ч|h))?(?:(\d+)(?:м|m))?$')
@@ -63,10 +62,10 @@ class AfkModal(Modal, title="Уход в AFK"):
         user_id = interaction.user.id
         now = time.time()
 
-        if await db.is_afk(user_id):
+        if db.is_afk(user_id):
             return await interaction.response.send_message("❌ Вы уже в AFK. Сначала выйдите из AFK.", ephemeral=True)
 
-        await db.add_afk(user_id, now, duration, reason, interaction.channel_id)
+        db.add_afk(user_id, now, duration, reason, interaction.channel_id)
 
         await interaction.response.send_message(
             f"✅ Вы ушли в AFK на {format_remaining(duration)}. Причина: {reason}",
@@ -90,7 +89,6 @@ class AfkModal(Modal, title="Уход в AFK"):
         traceback.print_exc()
         await interaction.response.send_message("❌ Произошла внутренняя ошибка.", ephemeral=True)
 
-
 class AfkPanelView(View):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -102,7 +100,7 @@ class AfkPanelView(View):
 
     @discord.ui.button(label="📋 Список AFK", style=discord.ButtonStyle.secondary, custom_id="afk_list")
     async def list_afk(self, interaction: discord.Interaction, button: Button):
-        afk_list = await db.get_all_afk()
+        afk_list = db.get_all_afk()
         if not afk_list:
             return await interaction.response.send_message("📭 Сейчас никто не в AFK.", ephemeral=True)
 
@@ -127,10 +125,10 @@ class AfkPanelView(View):
 
     @discord.ui.button(label="🚪 Выйти из AFK", style=discord.ButtonStyle.danger, custom_id="afk_exit")
     async def exit_afk(self, interaction: discord.Interaction, button: Button):
-        if not await db.is_afk(interaction.user.id):
+        if not db.is_afk(interaction.user.id):
             return await interaction.response.send_message("❌ Вы не в AFK.", ephemeral=True)
 
-        await db.remove_afk(interaction.user.id)
+        db.remove_afk(interaction.user.id)
         await interaction.response.send_message("✅ Вы вышли из AFK.", ephemeral=True)
 
         log_channel = self.bot.get_channel(AFK_LOG_CHANNEL_ID)
@@ -144,7 +142,6 @@ class AfkPanelView(View):
             embed.set_thumbnail(url=interaction.user.display_avatar.url)
             await log_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
-
 class Afk(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -155,14 +152,14 @@ class Afk(commands.Cog):
     def cog_unload(self):
         self.check_afk_expired.cancel()
 
-    @tasks.loop(seconds=120)  # Увеличено до 120 секунд для снижения нагрузки
+    @tasks.loop(seconds=120)
     async def check_afk_expired(self):
         await self.bot.wait_until_ready()
         now = time.time()
-        afk_list = await db.get_all_afk()
+        afk_list = db.get_all_afk()
         for user_id, start, duration, reason in afk_list:
             if start + duration <= now:
-                await db.remove_afk(user_id)
+                db.remove_afk(user_id)
                 user = self.bot.get_user(user_id)
                 if user:
                     try:

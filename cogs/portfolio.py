@@ -26,7 +26,6 @@ RANK_TO_ROLE = {
 }
 
 def get_user_rank(member):
-    """Определяет ранг пользователя по его ролям: HVWT > Young > test. Возвращает None, если нет ранга."""
     if HVWT_ROLE_ID in [r.id for r in member.roles]:
         return 'HVWT'
     if YOUNG_ROLE_ID in [r.id for r in member.roles]:
@@ -40,7 +39,7 @@ def has_access(user):
     return any(role in user_roles for role in PORTFOLIO_ACCESS_ROLES)
 
 async def refresh_portfolio_embed(channel):
-    portfolio = await db.get_portfolio_by_channel(channel.id)
+    portfolio = db.get_portfolio_by_channel(channel.id)
     if not portfolio:
         return
     owner_id, rank, tier, pinned_by, _, _ = portfolio
@@ -48,7 +47,7 @@ async def refresh_portfolio_embed(channel):
     if not owner:
         return
 
-    warns = await db.get_warns(owner_id)
+    warns = db.get_warns(owner_id)
 
     embed = discord.Embed(
         title="📁 Личный канал участника",
@@ -73,19 +72,15 @@ async def refresh_portfolio_embed(channel):
             return
     await channel.send(embed=embed)
 
-
 async def create_portfolio_for_user(guild, member):
-    """Создаёт портфель для указанного участника. Если у него нет ранга, ранг в БД будет пустым, категория test."""
-    if await db.get_portfolio_by_owner(member.id):
+    if db.get_portfolio_by_owner(member.id):
         return None
 
     rank = get_user_rank(member)
     if rank:
-        # У пользователя есть ранговая роль
         category_id = RANK_TO_CATEGORY.get(rank)
         db_rank = rank
     else:
-        # Нет ранга – используем категорию test, в БД сохраняем пустую строку
         category_id = TEST_CATEGORY_ID
         db_rank = ""
 
@@ -111,7 +106,7 @@ async def create_portfolio_for_user(guild, member):
 
     new_channel = await category.create_text_channel(name=channel_name, overwrites=overwrites)
 
-    warns = await db.get_warns(member.id)
+    warns = db.get_warns(member.id)
     embed = discord.Embed(
         title="📁 Личный канал участника",
         description=(
@@ -133,7 +128,7 @@ async def create_portfolio_for_user(guild, member):
     thread_rp = await new_channel.create_thread(name="РП мероприятия", type=discord.ChannelType.public_thread)
     thread_gang = await new_channel.create_thread(name="MCL | Capt", type=discord.ChannelType.public_thread)
 
-    await db.create_portfolio(
+    db.create_portfolio(
         channel_id=new_channel.id,
         owner_id=member.id,
         rank=db_rank,
@@ -144,7 +139,6 @@ async def create_portfolio_for_user(guild, member):
     )
 
     return new_channel
-
 
 class PortfolioActionSelect(Select):
     def __init__(self):
@@ -165,7 +159,7 @@ class PortfolioActionSelect(Select):
 
         action = self.values[0]
         channel = interaction.channel
-        portfolio = await db.get_portfolio_by_channel(channel.id)
+        portfolio = db.get_portfolio_by_channel(channel.id)
         if not portfolio:
             return await interaction.followup.send("❌ Портфель не найден в БД.", ephemeral=True)
 
@@ -174,7 +168,7 @@ class PortfolioActionSelect(Select):
 
         if action == "delete":
             await channel.delete(reason="Портфель удалён")
-            await db.delete_portfolio(channel.id)
+            db.delete_portfolio(channel.id)
             await interaction.followup.send("✅ Канал удалён.", ephemeral=True)
             await self._log_action(interaction, f"🗑️ Портфель удалён (владелец: {owner.mention if owner else owner_id})")
             return
@@ -184,13 +178,12 @@ class PortfolioActionSelect(Select):
     async def _process_action(self, interaction, action, channel, owner, current_rank, current_tier):
         try:
             log_msg = None
-            rank_order = ['', 'test', 'Young', 'HVWT']  # пустая строка означает "нет ранга"
+            rank_order = ['', 'test', 'Young', 'HVWT']
 
             if action == "rank_up":
                 if not owner:
                     await interaction.followup.send("❌ Владелец не найден.", ephemeral=True)
                     return
-                # Определяем следующий ранг
                 if current_rank == '':
                     next_rank = 'test'
                 elif current_rank == 'test':
@@ -201,21 +194,17 @@ class PortfolioActionSelect(Select):
                     await interaction.followup.send("❌ Это максимальный ранг.", ephemeral=True)
                     return
 
-                # Выдаём роль нового ранга
                 new_role = interaction.guild.get_role(RANK_TO_ROLE[next_rank])
                 if new_role:
                     await owner.add_roles(new_role)
-                # Если был старый ранг (не пустой), снимаем старую роль
                 if current_rank and current_rank != '':
                     old_role = interaction.guild.get_role(RANK_TO_ROLE[current_rank])
                     if old_role:
                         await owner.remove_roles(old_role)
-                # Перемещаем канал в новую категорию
                 new_category = interaction.guild.get_channel(RANK_TO_CATEGORY[next_rank])
                 if new_category:
                     await channel.edit(category=new_category)
-                # Обновляем БД
-                await db.update_portfolio_rank(channel.id, next_rank)
+                db.update_portfolio_rank(channel.id, next_rank)
                 await refresh_portfolio_embed(channel)
                 log_msg = f"⬆️ Ранг повышен с '{current_rank if current_rank else 'нет ранга'}' до {next_rank}"
                 await interaction.followup.send(f"✅ Ранг повышен до {next_rank}.", ephemeral=True)
@@ -227,7 +216,6 @@ class PortfolioActionSelect(Select):
                 if current_rank == '':
                     await interaction.followup.send("❌ У пользователя нет ранга для понижения.", ephemeral=True)
                     return
-                # Определяем предыдущий ранг
                 if current_rank == 'HVWT':
                     prev_rank = 'Young'
                 elif current_rank == 'Young':
@@ -238,25 +226,20 @@ class PortfolioActionSelect(Select):
                     await interaction.followup.send("❌ Некорректный ранг.", ephemeral=True)
                     return
 
-                # Снимаем текущую роль
                 old_role = interaction.guild.get_role(RANK_TO_ROLE[current_rank])
                 if old_role:
                     await owner.remove_roles(old_role)
-                # Если новый ранг не пустой, выдаём роль
                 if prev_rank:
                     new_role = interaction.guild.get_role(RANK_TO_ROLE[prev_rank])
                     if new_role:
                         await owner.add_roles(new_role)
-                # Перемещаем канал в соответствующую категорию
                 if prev_rank:
                     new_category = interaction.guild.get_channel(RANK_TO_CATEGORY[prev_rank])
                 else:
-                    # Если ранг убран, перемещаем в категорию test
                     new_category = interaction.guild.get_channel(TEST_CATEGORY_ID)
                 if new_category:
                     await channel.edit(category=new_category)
-                # Обновляем БД
-                await db.update_portfolio_rank(channel.id, prev_rank)
+                db.update_portfolio_rank(channel.id, prev_rank)
                 await refresh_portfolio_embed(channel)
                 log_msg = f"⬇️ Ранг понижен с {current_rank} до '{prev_rank if prev_rank else 'нет ранга'}'"
                 await interaction.followup.send(f"✅ Ранг понижен до {'нет ранга' if not prev_rank else prev_rank}.", ephemeral=True)
@@ -265,9 +248,9 @@ class PortfolioActionSelect(Select):
                 if not owner:
                     await interaction.followup.send("❌ Владелец не найден.", ephemeral=True)
                     return
-                await db.add_warn(owner.id)
+                db.add_warn(owner.id)
                 await refresh_portfolio_embed(channel)
-                warns = await db.get_warns(owner.id)
+                warns = db.get_warns(owner.id)
                 log_msg = f"⚠️ Выдан варн (теперь всего: {warns})"
                 await interaction.followup.send(f"⚠️ Варн выдан пользователю {owner.mention}.", ephemeral=True)
 
@@ -275,13 +258,13 @@ class PortfolioActionSelect(Select):
                 if not owner:
                     await interaction.followup.send("❌ Владелец не найден.", ephemeral=True)
                     return
-                current_warns = await db.get_warns(owner.id)
+                current_warns = db.get_warns(owner.id)
                 if current_warns <= 0:
                     await interaction.followup.send("❌ У пользователя нет варнов.", ephemeral=True)
                     return
-                await db.remove_warn(owner.id)
+                db.remove_warn(owner.id)
                 await refresh_portfolio_embed(channel)
-                warns = await db.get_warns(owner.id)
+                warns = db.get_warns(owner.id)
                 log_msg = f"✅ Снят один варн (осталось: {warns})"
                 await interaction.followup.send(f"✅ Варн снят у пользователя {owner.mention}.", ephemeral=True)
 
@@ -309,7 +292,6 @@ class PortfolioActionSelect(Select):
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         await log_channel.send(embed=embed)
 
-
 class PortfolioTierSelect(Select):
     def __init__(self):
         options = [
@@ -331,7 +313,7 @@ class PortfolioTierSelect(Select):
 
     async def _set_tier(self, interaction, channel, tier):
         try:
-            await db.update_portfolio_tier(channel.id, tier)
+            db.update_portfolio_tier(channel.id, tier)
             await refresh_portfolio_embed(channel)
             await interaction.followup.send(f"✅ Установлен тир {tier}.", ephemeral=True)
             log_channel = interaction.guild.get_channel(PORTFOLIO_LOG_CHANNEL_ID)
@@ -349,7 +331,6 @@ class PortfolioTierSelect(Select):
             traceback.print_exc()
             await interaction.followup.send("❌ Внутренняя ошибка.", ephemeral=True)
 
-
 class PromotionRequestModal(Modal, title="Запрос повышения"):
     def __init__(self, channel_id):
         super().__init__()
@@ -366,7 +347,7 @@ class PromotionRequestModal(Modal, title="Запрос повышения"):
         reason = self.children[0].value
         await interaction.response.defer(ephemeral=True)
 
-        portfolio = await db.get_portfolio_by_channel(self.channel_id)
+        portfolio = db.get_portfolio_by_channel(self.channel_id)
         if not portfolio:
             return await interaction.followup.send("❌ Ошибка: портфель не найден.", ephemeral=True)
 
@@ -386,7 +367,6 @@ class PromotionRequestModal(Modal, title="Запрос повышения"):
 
         await requests_channel.send(embed=embed)
         await interaction.followup.send("✅ Запрос отправлен кураторам.", ephemeral=True)
-
 
 class VodRequestModal(Modal, title="Запрос разбора отката"):
     def __init__(self, channel_id):
@@ -410,7 +390,7 @@ class VodRequestModal(Modal, title="Запрос разбора отката"):
         description = self.children[1].value or "—"
         await interaction.response.defer(ephemeral=True)
 
-        portfolio = await db.get_portfolio_by_channel(self.channel_id)
+        portfolio = db.get_portfolio_by_channel(self.channel_id)
         if not portfolio:
             return await interaction.followup.send("❌ Ошибка: портфель не найден.", ephemeral=True)
 
@@ -432,7 +412,6 @@ class VodRequestModal(Modal, title="Запрос разбора отката"):
         await requests_channel.send(embed=embed)
         await interaction.followup.send("✅ Запрос отправлен кураторам.", ephemeral=True)
 
-
 class WarnRemoveRequestModal(Modal, title="Запрос на снятие варна"):
     def __init__(self, channel_id):
         super().__init__()
@@ -449,7 +428,7 @@ class WarnRemoveRequestModal(Modal, title="Запрос на снятие вар
         reason = self.children[0].value
         await interaction.response.defer(ephemeral=True)
 
-        portfolio = await db.get_portfolio_by_channel(self.channel_id)
+        portfolio = db.get_portfolio_by_channel(self.channel_id)
         if not portfolio:
             return await interaction.followup.send("❌ Ошибка: портфель не найден.", ephemeral=True)
 
@@ -469,7 +448,6 @@ class WarnRemoveRequestModal(Modal, title="Запрос на снятие вар
 
         await requests_channel.send(embed=embed)
         await interaction.followup.send("✅ Запрос отправлен кураторам.", ephemeral=True)
-
 
 class PortfolioRequestSelect(Select):
     def __init__(self, channel_id):
@@ -493,14 +471,12 @@ class PortfolioRequestSelect(Select):
             modal = WarnRemoveRequestModal(interaction.channel.id)
             await interaction.response.send_modal(modal)
 
-
 class PortfolioView(View):
     def __init__(self, channel_id):
         super().__init__(timeout=None)
         self.add_item(PortfolioActionSelect())
         self.add_item(PortfolioTierSelect())
         self.add_item(PortfolioRequestSelect(channel_id))
-
 
 class CreatePortfolioView(View):
     def __init__(self, bot):
@@ -512,17 +488,14 @@ class CreatePortfolioView(View):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            if await db.get_portfolio_by_owner(interaction.user.id):
+            if db.get_portfolio_by_owner(interaction.user.id):
                 return await interaction.followup.send("❌ У вас уже есть личный канал.", ephemeral=True)
 
-            # Определяем ранг
             rank = get_user_rank(interaction.user)
             if rank:
-                # Есть ранг
                 category_id = RANK_TO_CATEGORY.get(rank)
                 db_rank = rank
             else:
-                # Нет ранга – используем категорию test, в БД пустая строка
                 category_id = TEST_CATEGORY_ID
                 db_rank = ""
 
@@ -549,7 +522,7 @@ class CreatePortfolioView(View):
 
             new_channel = await category.create_text_channel(name=channel_name, overwrites=overwrites)
 
-            warns = await db.get_warns(interaction.user.id)
+            warns = db.get_warns(interaction.user.id)
             embed = discord.Embed(
                 title="📁 Личный канал участника",
                 description=(
@@ -571,7 +544,7 @@ class CreatePortfolioView(View):
             thread_rp = await new_channel.create_thread(name="РП мероприятия", type=discord.ChannelType.public_thread)
             thread_gang = await new_channel.create_thread(name="MCL | Capt", type=discord.ChannelType.public_thread)
 
-            await db.create_portfolio(
+            db.create_portfolio(
                 channel_id=new_channel.id,
                 owner_id=interaction.user.id,
                 rank=db_rank,
@@ -587,7 +560,6 @@ class CreatePortfolioView(View):
             traceback.print_exc()
             await interaction.followup.send("❌ Внутренняя ошибка.", ephemeral=True)
 
-
 class Portfolio(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -599,12 +571,12 @@ class Portfolio(commands.Cog):
     async def restore_portfolios(self):
         await self.bot.wait_until_ready()
         await asyncio.sleep(2)
-        portfolios = await db.get_all_portfolios()
+        portfolios = db.get_all_portfolios()
         restored = 0
         for channel_id, owner_id, rank, tier, pinned_by, thread_rp_id, thread_gang_id, _ in portfolios:
             channel = self.bot.get_channel(channel_id)
             if not channel:
-                await db.delete_portfolio(channel_id)
+                db.delete_portfolio(channel_id)
                 continue
             async for message in channel.history(limit=5):
                 if message.author == channel.guild.me and message.embeds:
@@ -618,7 +590,7 @@ class Portfolio(commands.Cog):
     async def on_member_update(self, before, after):
         if before.display_name == after.display_name:
             return
-        portfolio = await db.get_portfolio_by_owner(after.id)
+        portfolio = db.get_portfolio_by_owner(after.id)
         if not portfolio:
             return
         channel_id, rank, tier, pinned_by, thread_rp_id, thread_gang_id = portfolio
@@ -636,17 +608,17 @@ class Portfolio(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member):
-        portfolio = await db.get_portfolio_by_owner(member.id)
+        portfolio = db.get_portfolio_by_owner(member.id)
         if portfolio:
             channel = member.guild.get_channel(portfolio[0])
             if channel:
                 await channel.delete(reason="Участник покинул сервер")
-            await db.delete_portfolio(portfolio[0])
+            db.delete_portfolio(portfolio[0])
 
     @commands.command(name='create_portfolio_for', aliases=['cpf'])
     @commands.has_any_role(*PORTFOLIO_ACCESS_ROLES)
     async def create_portfolio_for(self, ctx, member: discord.Member):
-        if await db.get_portfolio_by_owner(member.id):
+        if db.get_portfolio_by_owner(member.id):
             await ctx.send(f"❌ У пользователя {member.mention} уже есть портфель.")
             return
 
@@ -663,7 +635,7 @@ class Portfolio(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def fix_portfolio_names(self, ctx):
         await ctx.send("🔄 Начинаю переименование портфелей...")
-        portfolios = await db.get_all_portfolios()
+        portfolios = db.get_all_portfolios()
         renamed = 0
         for channel_id, owner_id, rank, tier, pinned_by, thread_rp_id, thread_gang_id, _ in portfolios:
             channel = self.bot.get_channel(channel_id)
@@ -702,7 +674,6 @@ class Portfolio(commands.Cog):
         view = CreatePortfolioView(self.bot)
         await channel.send(embed=embed, view=view)
         await ctx.send("✅ Панель создания портфелей установлена.")
-
 
 async def setup(bot):
     await bot.add_cog(Portfolio(bot))

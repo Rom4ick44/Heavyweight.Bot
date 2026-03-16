@@ -28,7 +28,6 @@ class VacationModal(Modal, title="Уход в отпуск"):
         ))
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Немедленный defer, чтобы не превысить лимит времени
         await interaction.response.defer(ephemeral=True)
 
         duration = self.children[0].value
@@ -37,18 +36,16 @@ class VacationModal(Modal, title="Уход в отпуск"):
         now = time.time()
 
         try:
-            if await db.is_on_vacation(user_id):
+            if db.is_on_vacation(user_id):
                 return await interaction.followup.send("❌ Вы уже в отпуске. Сначала вернитесь из отпуска.", ephemeral=True)
 
             role_vacation = interaction.guild.get_role(VACATION_ROLE_ID)
             if role_vacation and role_vacation in interaction.user.roles:
                 return await interaction.followup.send("❌ У вас уже есть роль отпуска. Если это ошибка, обратитесь к администратору.", ephemeral=True)
 
-            # Сохраняем текущие роли
             current_roles = [r.id for r in interaction.user.roles if r.is_assignable() and r != role_vacation]
             roles_json = json.dumps(current_roles)
 
-            # Снимаем все роли
             for role in interaction.user.roles:
                 if role.is_assignable() and role != role_vacation:
                     try:
@@ -56,12 +53,10 @@ class VacationModal(Modal, title="Уход в отпуск"):
                     except Exception as e:
                         print(f"Не удалось снять роль {role.name}: {e}")
 
-            # Выдаём роль отпуска
             if role_vacation:
                 await interaction.user.add_roles(role_vacation, reason="Уход в отпуск")
 
-            # Сохраняем в БД
-            await db.add_vacation(user_id, now, duration, reason, interaction.channel_id, roles_json)
+            db.add_vacation(user_id, now, duration, reason, interaction.channel_id, roles_json)
 
             await interaction.followup.send(
                 f"✅ Вы ушли в отпуск. Длительность: {duration}. Причина: {reason}\n"
@@ -69,7 +64,6 @@ class VacationModal(Modal, title="Уход в отпуск"):
                 ephemeral=True
             )
 
-            # Логируем
             log_channel = self.bot.get_channel(VACATION_LOG_CHANNEL_ID)
             if log_channel:
                 embed = discord.Embed(
@@ -94,7 +88,6 @@ class VacationModal(Modal, title="Уход в отпуск"):
         except:
             pass
 
-
 class VacationPanelView(View):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -107,16 +100,15 @@ class VacationPanelView(View):
     @discord.ui.button(label="↩️ Отменить отпуск", style=discord.ButtonStyle.danger, custom_id="vacation_cancel")
     async def cancel_vacation(self, interaction: discord.Interaction, button: Button):
         user_id = interaction.user.id
-        if not await db.is_on_vacation(user_id):
+        if not db.is_on_vacation(user_id):
             return await interaction.response.send_message("❌ Вы не в отпуске.", ephemeral=True)
 
-        vacation_data = await db.get_vacation(user_id)
+        vacation_data = db.get_vacation(user_id)
         if not vacation_data:
             return await interaction.response.send_message("❌ Ошибка: запись об отпуске не найдена.", ephemeral=True)
 
         start, duration, reason, roles_json = vacation_data
 
-        # Восстанавливаем роли
         if roles_json:
             try:
                 role_ids = json.loads(roles_json)
@@ -130,17 +122,14 @@ class VacationPanelView(View):
             except Exception as e:
                 print(f"Ошибка при восстановлении ролей: {e}")
 
-        # Удаляем роль отпуска
         role_vacation = interaction.guild.get_role(VACATION_ROLE_ID)
         if role_vacation and role_vacation in interaction.user.roles:
             await interaction.user.remove_roles(role_vacation, reason="Возвращение из отпуска")
 
-        # Удаляем из БД
-        await db.remove_vacation(user_id)
+        db.remove_vacation(user_id)
 
         await interaction.response.send_message("✅ Вы вернулись из отпуска.", ephemeral=True)
 
-        # Логируем
         log_channel = self.bot.get_channel(VACATION_LOG_CHANNEL_ID)
         if log_channel:
             embed = discord.Embed(
@@ -151,7 +140,6 @@ class VacationPanelView(View):
             )
             embed.set_thumbnail(url=interaction.user.display_avatar.url)
             await log_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
-
 
 class Vacation(commands.Cog):
     def __init__(self, bot):
@@ -188,8 +176,8 @@ class Vacation(commands.Cog):
             return
         if message.mentions:
             for user in message.mentions:
-                if await db.is_on_vacation(user.id):
-                    vacation_data = await db.get_vacation(user.id)
+                if db.is_on_vacation(user.id):
+                    vacation_data = db.get_vacation(user.id)
                     if vacation_data:
                         start, duration, reason, _ = vacation_data
                         try:
@@ -203,7 +191,6 @@ class Vacation(commands.Cog):
                             await message.author.send(embed=embed)
                         except:
                             pass
-
 
 async def setup(bot):
     await bot.add_cog(Vacation(bot))
