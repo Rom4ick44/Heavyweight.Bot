@@ -7,7 +7,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     
-    # Таблица заявок
+    # Таблица заявок с полем app_type
     cur.execute('''
         CREATE TABLE IF NOT EXISTS applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,7 +19,8 @@ def init_db():
             ping_message_id INTEGER,
             claimed_by INTEGER,
             date TEXT,
-            reviewed_at TEXT
+            reviewed_at TEXT,
+            app_type TEXT DEFAULT 'regular'
         )
     ''')
     
@@ -110,24 +111,30 @@ def init_db():
         )
     ''')
     
-    # Проверяем наличие поля roles в таблице vacations (если таблица уже существовала)
+    # Проверяем наличие поля roles в таблице vacations
     cur.execute("PRAGMA table_info(vacations)")
     columns = [col[1] for col in cur.fetchall()]
     if 'roles' not in columns:
         cur.execute("ALTER TABLE vacations ADD COLUMN roles TEXT")
+    
+    # Проверяем наличие поля app_type в таблице applications
+    cur.execute("PRAGMA table_info(applications)")
+    columns = [col[1] for col in cur.fetchall()]
+    if 'app_type' not in columns:
+        cur.execute("ALTER TABLE applications ADD COLUMN app_type TEXT DEFAULT 'regular'")
     
     conn.commit()
     conn.close()
 
 
 # ---------- Заявки ----------
-def add_application(user_id, answers_json, message_id, ping_message_id=None):
+def add_application(user_id, answers_json, message_id, ping_message_id=None, app_type='regular'):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute('''
-        INSERT INTO applications (user_id, answers, status, message_id, ping_message_id, date)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (user_id, answers_json, 'pending', message_id, ping_message_id, datetime.now().isoformat()))
+        INSERT INTO applications (user_id, answers, status, message_id, ping_message_id, date, app_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (user_id, answers_json, 'pending', message_id, ping_message_id, datetime.now().isoformat(), app_type))
     app_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -136,7 +143,7 @@ def add_application(user_id, answers_json, message_id, ping_message_id=None):
 def get_application(app_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("SELECT user_id, answers, status, reviewer_id, message_id, date, claimed_by, ping_message_id, reviewed_at FROM applications WHERE id = ?", (app_id,))
+    cur.execute("SELECT user_id, answers, status, reviewer_id, message_id, date, claimed_by, ping_message_id, reviewed_at, app_type FROM applications WHERE id = ?", (app_id,))
     row = cur.fetchone()
     conn.close()
     return row
@@ -144,7 +151,7 @@ def get_application(app_id):
 def get_application_by_message(message_id):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("SELECT id, user_id, answers, status, reviewer_id, message_id, claimed_by, ping_message_id, reviewed_at FROM applications WHERE message_id = ?", (message_id,))
+    cur.execute("SELECT id, user_id, answers, status, reviewer_id, message_id, claimed_by, ping_message_id, reviewed_at, app_type FROM applications WHERE message_id = ?", (message_id,))
     row = cur.fetchone()
     conn.close()
     return row
@@ -196,6 +203,31 @@ def get_all_applications(limit=50):
     rows = cur.fetchall()
     conn.close()
     return rows
+
+def get_last_rejected_time(user_id):
+    """Возвращает дату последней отклонённой заявки пользователя или None."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT reviewed_at FROM applications 
+        WHERE user_id = ? AND status = 'rejected' AND reviewed_at IS NOT NULL 
+        ORDER BY reviewed_at DESC LIMIT 1
+    """, (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return datetime.fromisoformat(row[0])
+    return None
+
+def clear_rejected_applications(user_id):
+    """Удаляет все отклонённые заявки пользователя (снимает кулдаун)."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM applications WHERE user_id = ? AND status = 'rejected'", (user_id,))
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
 
 
 # ---------- Настройки ----------

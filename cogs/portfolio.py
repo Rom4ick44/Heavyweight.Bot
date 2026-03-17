@@ -9,8 +9,8 @@ from config import (
     TEST_ROLE_ID, YOUNG_ROLE_ID, HVWT_ROLE_ID,
     TEST_CATEGORY_ID, YOUNG_CATEGORY_ID, HVWT_CATEGORY_ID,
     PORTFOLIO_CREATION_CHANNEL_ID, PORTFOLIO_ACCESS_ROLES,
-    PORTFOLIO_REQUESTS_CHANNEL_ID,
-    PORTFOLIO_LOG_CHANNEL_ID
+    PORTFOLIO_REQUESTS_CHANNEL_ID, PORTFOLIO_LOG_CHANNEL_ID,
+    TIER1_ROLE_ID, TIER2_ROLE_ID, TIER3_ROLE_ID
 )
 
 RANK_TO_CATEGORY = {
@@ -23,6 +23,12 @@ RANK_TO_ROLE = {
     'test': TEST_ROLE_ID,
     'Young': YOUNG_ROLE_ID,
     'HVWT': HVWT_ROLE_ID
+}
+
+TIER_TO_ROLE = {
+    1: TIER1_ROLE_ID,
+    2: TIER2_ROLE_ID,
+    3: TIER3_ROLE_ID
 }
 
 def get_user_rank(member):
@@ -292,6 +298,7 @@ class PortfolioActionSelect(Select):
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         await log_channel.send(embed=embed)
 
+
 class PortfolioTierSelect(Select):
     def __init__(self):
         options = [
@@ -306,30 +313,55 @@ class PortfolioTierSelect(Select):
         if not has_access(interaction.user):
             return await interaction.followup.send("❌ У вас нет прав для управления портфелями.", ephemeral=True)
 
-        tier = int(self.values[0])
+        new_tier = int(self.values[0])
         channel = interaction.channel
 
-        asyncio.create_task(self._set_tier(interaction, channel, tier))
+        asyncio.create_task(self._set_tier(interaction, channel, new_tier))
 
-    async def _set_tier(self, interaction, channel, tier):
+    async def _set_tier(self, interaction, channel, new_tier):
         try:
-            db.update_portfolio_tier(channel.id, tier)
+            portfolio = db.get_portfolio_by_channel(channel.id)
+            if not portfolio:
+                return await interaction.followup.send("❌ Портфель не найден.", ephemeral=True)
+
+            owner_id, rank, current_tier, pinned_by, _, _ = portfolio
+            owner = interaction.guild.get_member(owner_id)
+            if not owner:
+                return await interaction.followup.send("❌ Владелец не найден.", ephemeral=True)
+
+            # Снимаем старую роль тира, если была
+            if current_tier and current_tier in TIER_TO_ROLE:
+                old_role = interaction.guild.get_role(TIER_TO_ROLE[current_tier])
+                if old_role and old_role in owner.roles:
+                    await owner.remove_roles(old_role)
+
+            # Выдаём новую роль тира
+            new_role = interaction.guild.get_role(TIER_TO_ROLE[new_tier])
+            if new_role:
+                await owner.add_roles(new_role)
+
+            # Обновляем БД
+            db.update_portfolio_tier(channel.id, new_tier)
             await refresh_portfolio_embed(channel)
-            await interaction.followup.send(f"✅ Установлен тир {tier}.", ephemeral=True)
+            await interaction.followup.send(f"✅ Установлен тир {new_tier}.", ephemeral=True)
+
             log_channel = interaction.guild.get_channel(PORTFOLIO_LOG_CHANNEL_ID)
             if log_channel:
                 embed = discord.Embed(
                     title="📋 Изменение тира",
-                    description=f"**Куратор:** {interaction.user.mention}\nУстановлен тир {tier}",
+                    description=f"**Куратор:** {interaction.user.mention}\nУстановлен тир {new_tier} (роль выдана)",
                     color=discord.Color.blue(),
                     timestamp=discord.utils.utcnow()
                 )
+                embed.add_field(name="Владелец", value=owner.mention)
                 embed.add_field(name="Канал", value=interaction.channel.mention)
                 await log_channel.send(embed=embed)
+
         except Exception as e:
             print(f"Ошибка в PortfolioTierSelect: {e}")
             traceback.print_exc()
             await interaction.followup.send("❌ Внутренняя ошибка.", ephemeral=True)
+
 
 class PromotionRequestModal(Modal, title="Запрос повышения"):
     def __init__(self, channel_id):
@@ -449,6 +481,7 @@ class WarnRemoveRequestModal(Modal, title="Запрос на снятие вар
         await requests_channel.send(embed=embed)
         await interaction.followup.send("✅ Запрос отправлен кураторам.", ephemeral=True)
 
+
 class PortfolioRequestSelect(Select):
     def __init__(self, channel_id):
         options = [
@@ -471,12 +504,14 @@ class PortfolioRequestSelect(Select):
             modal = WarnRemoveRequestModal(interaction.channel.id)
             await interaction.response.send_modal(modal)
 
+
 class PortfolioView(View):
     def __init__(self, channel_id):
         super().__init__(timeout=None)
         self.add_item(PortfolioActionSelect())
         self.add_item(PortfolioTierSelect())
         self.add_item(PortfolioRequestSelect(channel_id))
+
 
 class CreatePortfolioView(View):
     def __init__(self, bot):
@@ -559,6 +594,7 @@ class CreatePortfolioView(View):
             print(f"Ошибка в create_portfolio: {e}")
             traceback.print_exc()
             await interaction.followup.send("❌ Внутренняя ошибка.", ephemeral=True)
+
 
 class Portfolio(commands.Cog):
     def __init__(self, bot):
