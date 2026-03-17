@@ -1,7 +1,7 @@
 # Файлы с секретами
 .env
 
-bot_database.db
+
 # Кэш Python
 __pycache__/
 *.pyc
