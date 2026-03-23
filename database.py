@@ -1,9 +1,12 @@
+import os
 import sqlite3
 from datetime import datetime
-
-DB_NAME = 'bot_database.db'
+from config import DB_NAME  # если DB_NAME определён в config
 
 def init_db():
+    # Создаём папку, если её нет
+    os.makedirs(os.path.dirname(DB_NAME), exist_ok=True)
+    
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     

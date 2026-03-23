@@ -1,5 +1,8 @@
 import os
 TOKEN = os.getenv('DISCORD_TOKEN')  # Токен бота (можно задать через переменную окружения)
+# Путь к папке для данных (постоянное хранилище)
+DATA_DIR = os.getenv('DATA_DIR', '/app/data')
+DB_NAME = os.path.join(DATA_DIR, 'bot_database.db')
 
 # ------------------ ID каналов ------------------
 WELCOME_CHANNEL_ID = 1416871199354523648               # Канал для приветственных сообщений новых участников
